@@ -53,7 +53,7 @@ to estimate the weights.(There is an example for this with SAMBA models in one o
 
 Do Mixing and Calibration Togeather
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-Rather than using calibrated models to mix we can do better by doing everythin all at once. The advantage of this \
+Rather than using calibrated models to mix we can do better by doing everything all at once. The advantage of this \
 is that the calibration of each model will happen using the experimental data that each model can explain the best.
 This would avoid situations where a model is calibrated using experimental data that is outside it's applicability.\
 (There is an example of this with Coleman models in one of the example notebooks)

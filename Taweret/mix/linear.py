@@ -67,8 +67,8 @@ class linear_mix():
         self.y_err = y_err.flatten()
 
         #check if mixing method exist
-        if method not in ['step', 'sigmoid', 'cdf']:
-            raise Exception('only supports the step or sigmoid mixing functions')
+        if method not in ['step', 'sigmoid', 'cdf', 'uniform']:
+            raise Exception('only supports the step, sigmoid, cdf and uniform mixing functions')
 
         self.method = method
 

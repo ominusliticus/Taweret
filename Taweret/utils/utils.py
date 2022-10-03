@@ -53,6 +53,9 @@ def mixture_function(method : str, x : np.ndarray, mixture_params : np.ndarray) 
     elif method=='step':
         x_0 = mixture_params[0]
         w = np.array([1-(eps) if xi<=x_0 else eps for xi in x]).flatten()
+    elif method=='uniform':
+        x_0 = mixture_params[0]
+        w = ((1/len(x))*np.ones(len(x))) - eps
     elif method=='cdf':
         theta_0, theta_1 = mixture_params
         x = theta_0 + theta_1*x
