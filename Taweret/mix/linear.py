@@ -13,7 +13,9 @@ from Taweret.core.base_model import BaseModel
 import matplotlib.pyplot as plt
 import numpy as np
 from multiprocessing import cpu_count
-from scipy.stats import dirichlet
+from scipy.stats import dirichlet as Dirichlet
+from scipy.stats import uniform as Uniform
+from scipy.stats import gamma as Gamma
 from typing import Any
 from typing import Callable
 from typing import Dict
@@ -695,6 +697,10 @@ class LinearMixerGlobal(BaseMixer):
 ##########################################################################
 
 
+# FIXME: Documentation should make it clear whether the `local_variable`
+#        parameter takes _all_ local variables or if the _user is expected_ to
+#        iterate over the local variable ranges in the analysis
+
 class LinearMixerLocal(BaseMixer):
     """
     Generates a local linear mixed model
@@ -748,9 +754,9 @@ class LinearMixerLocal(BaseMixer):
         self.n_mix = n_mix
         self.has_trained = False
 
-        self.sampled_weigths = []
-
-        # should I set all return variabls to `None` here?
+        # This will store the weights that are not rejected during the MCMC
+        # run
+        self.kept_weigths: Optional[np.ndarray] = None
 
     ##########################################################################
     ##########################################################################
@@ -845,76 +851,89 @@ class LinearMixerLocal(BaseMixer):
             array of sampled weights
         """
 
-        # FIXME: Not correct for simultaneous calibration
-        evaluation_points_count = local_variables.shape[0]
+        # The idea:
+        #   - We keep track of the weights that were actually kept as a
+        #     function of the local_variables
+        #   - When we evaluate the weights, it amounts to looking up in
+        #     our multi-dim histogram, which we index into provided the
+        #     `loca_variables` values
 
-        # make sure input array is two-dimensional in the case when
-        # self.n_local_variabels has size 1.
-        local_variables = np.array(local_variables).reshape(
-            -1, self.n_local_variables
-        )
+        NotImplemented
 
-        weights = np.zeros((self.n_mix, evaluation_points_count))
-        if self.deterministic:
-            # From Coleman thesis Ch. 3.5
-            for n in range(self.n_mix - 1):
-                for i in range(evaluation_points_count):
-                    weights[n, i] = np.prod(
-                        np.array(
-                            [
-                                np.exp(
-                                    sample[f"slope_({n}, {k})"]
-                                    * local_variables[i]
-                                    + sample[f"intercept_({n}, {k})"]
-                                )
-                                if self.polynomial_order == 1 else
-                                np.exp(
-                                    (
-                                        sample[f"slope_({n}, {k})"]
-                                        - local_variables[i]
-                                    )
-                                    ** 2
-                                    + sample[f"intercept_({n}, {k})"]
-                                )
-                                for k in range(self.n_local_variables)
-                            ]
-                        ),
-                        axis=0,
-                    )
+        # ====================================================================
+        # OLD CODE
+        # ====================================================================
 
-            for n in range(self.n_mix - 1):
-                weights[n] = weights[n] / (1 + np.sum(weights, axis=0))
-            for i in range(evaluation_points_count):
-                weights[self.n_mix - 1, i] = 1 - np.sum(weights[:, i])
-        else:
-            # Inspired from Coleman thesis Ch. 3.4.2
-            for i in range(evaluation_points_count):
-                gp_variance = sample["gp_variance"]
-                params = {
-                    "kernel__k1": ConstantKernel(
-                        constant_value=1 / gp_variance
-                    )
-                }
-                self.m_gpr.set_params(**params)
-                log_link_functions = self.m_gpr.sample_y(
-                    X=local_variables[i].reshape(-1, self.n_local_variables),
-                    n_samples=self.n_mix,
-                    random_state=None,
-                )
+        # # FIXME: Not correct for simultaneous calibration
+        # evaluation_points_count = local_variables.shape[0]
 
-                alphas = np.squeeze(np.exp(log_link_functions))
+        # # make sure input array is two-dimensional in the case when
+        # # self.n_local_variabels has size 1.
+        # local_variables = np.array(local_variables).reshape(
+        #     -1, self.n_local_variables
+        # )
 
-                # Have the alpha too small returns a nan from the
-                # `scipy.dirichlet` implementation, and we gaurd against it
-                for n in range(self.n_mix):
-                    if alphas[n] < 0.1:
-                        alphas[n] = 0.1
-                    elif alphas[n] > 100:
-                        alphas[n] = 100
+        # weights = np.zeros((self.n_mix, evaluation_points_count))
+        # if self.deterministic:
+        #     # From Coleman thesis Ch. 3.5
+        #     for n in range(self.n_mix - 1):
+        #         for i in range(evaluation_points_count):
+        #             weights[n, i] = np.prod(
+        #                 np.array(
+        #                     [
+        #                         np.exp(
+        #                             sample[f"slope_({n}, {k})"]
+        #                             * local_variables[i]
+        #                             + sample[f"intercept_({n}, {k})"]
+        #                         )
+        #                         if self.polynomial_order == 1 else
+        #                         np.exp(
+        #                             (
+        #                                 sample[f"slope_({n}, {k})"]
+        #                                 - local_variables[i]
+        #                             )
+        #                             ** 2
+        #                             + sample[f"intercept_({n}, {k})"]
+        #                         )
+        #                         for k in range(self.n_local_variables)
+        #                     ]
+        #                 ),
+        #                 axis=0,
+        #             )
 
-                weights[:, i] = np.squeeze(dirichlet.rvs(alphas))
+        #     for n in range(self.n_mix - 1):
+        #         weights[n] = weights[n] / (1 + np.sum(weights, axis=0))
+        #     for i in range(evaluation_points_count):
+        #         weights[self.n_mix - 1, i] = 1 - np.sum(weights[:, i])
+        # else:
+        #     # Inspired from Coleman thesis Ch. 3.4.2
+        #     for i in range(evaluation_points_count):
+        #         gp_variance = sample["gp_variance"]
+        #         params = {
+        #             "kernel__k1": ConstantKernel(
+        #                 constant_value=1 / gp_variance
+        #             )
+        #         }
+        #         self.m_gpr.set_params(**params)
+        #         log_link_functions = self.m_gpr.sample_y(
+        #             X=local_variables[i].reshape(-1, self.n_local_variables),
+        #             n_samples=self.n_mix,
+        #             random_state=None,
+        #         )
 
-        return np.squeeze(weights)
+        #         alphas = np.squeeze(np.exp(log_link_functions))
+
+        #         # Have the alpha too small returns a nan from the
+        #         # `scipy.dirichlet` implementation, and we gaurd against it
+        #         for n in range(self.n_mix):
+        #             if alphas[n] < 0.1:
+        #                 alphas[n] = 0.1
+        #             elif alphas[n] > 100:
+        #                 alphas[n] = 100
+
+        #         weights[:, i] = np.squeeze(dirichlet.rvs(alphas))
+
+        # return np.squeeze(weights)
 
     ##########################################################################
     ##########################################################################
@@ -1003,7 +1022,6 @@ class LinearMixerLocal(BaseMixer):
             a set of weights
         """
 
-        self.sampled_weigths.append(weights)
         log_weights = np.log(weights + eps)
 
         if model_parameters is None:
@@ -1467,6 +1485,7 @@ class LinearMixerLocal(BaseMixer):
 
         # FIXME: All options not implemented
         # FIXME: Not correct for simultaneous calibration
+
         self.deterministic = deterministic_priors
         self.n_local_variables = example_local_variable.shape[0]
         self.m_prior = dict()
@@ -1483,17 +1502,15 @@ class LinearMixerLocal(BaseMixer):
 
             for n in range(0, self.n_mix):
                 for k in range(self.n_local_variables):
-                    self.m_prior[f"slope_({n}, {k})"] = bilby_prior.Uniform(
-                        minimum=local_variables_ranges[k, 0],
-                        maximum=local_variables_ranges[k, 1],
-                        name=f"mu_({n}, {k})",
+                    self.m_prior[f"slope_({n}, {k})"] = Uniform(
+                        loc=local_variables_ranges[k, 0],
+                        scale=np.diff(local_variables_ranges[k]),
                     )
                     self.m_prior[
                         f"intercept_({n}, {k})"
-                    ] = bilby_prior.Uniform(
-                        minimum=local_variables_ranges[k, 0],
-                        maximum=local_variables_ranges[k, 1],
-                        name=f"sigma_({n}, {k})",
+                    ] = Uniform(
+                        loc=local_variables_ranges[k, 0],
+                        scale=np.diff(local_variables_ranges[k]),
                     )
             print(self.m_prior)
         else:
@@ -1505,7 +1522,7 @@ class LinearMixerLocal(BaseMixer):
             largest_range = np.max(np.diff(local_variables_ranges))
             kernel = 2 * Matern(length_scale=largest_range / 5)
             self.m_gpr = gpr(kernel=kernel)
-            self.m_prior["gp_variance"] = bilby_prior.Gamma(k=5, theta=1)
+            self.m_prior["gp_variance"] = Gamma(a=5, scale=1)
 
         for key, model in self.models.items():
             if model.m_prior is not None:
@@ -1513,7 +1530,53 @@ class LinearMixerLocal(BaseMixer):
                 # prior a unique key
                 self.m_prior.update(model.m_prior)
 
-        self.m_prior = bilby_prior.PriorDict(dictionary=self.m_prior)
+        # ====================================================================
+        # OLD CODE
+        # ====================================================================
+
+        # if deterministic_priors:
+        #     if polynomial_order is None:
+        #         print("No polynomial order is given, assuming 2 by default")
+        #         self.polynomial_order = 2
+        #     elif polynomial_order > 2:
+        #         print("Only powers supported are 1 and 2, setting to 2")
+        #         self.polynomial_order = 2
+        #     else:
+        #         self.polynomial_order = polynomial_order
+
+        #     for n in range(0, self.n_mix):
+        #         for k in range(self.n_local_variables):
+        #             self.m_prior[f"slope_({n}, {k})"] = bilby_prior.Uniform(
+        #                 minimum=local_variables_ranges[k, 0],
+        #                 maximum=local_variables_ranges[k, 1],
+        #                 name=f"mu_({n}, {k})",
+        #             )
+        #             self.m_prior[
+        #                 f"intercept_({n}, {k})"
+        #             ] = bilby_prior.Uniform(
+        #                 minimum=local_variables_ranges[k, 0],
+        #                 maximum=local_variables_ranges[k, 1],
+        #                 name=f"sigma_({n}, {k})",
+        #             )
+        #     print(self.m_prior)
+        # else:
+        #     # The GP is created in the `set_prior` function because it serves
+        #     # as a prior on the space functions for the log-link functions
+        #     #
+        #     # We artificially set the correlation length to be 1/5 the largest
+        #     # range in the past ranges.
+        #     largest_range = np.max(np.diff(local_variables_ranges))
+        #     kernel = 2 * Matern(length_scale=largest_range / 5)
+        #     self.m_gpr = gpr(kernel=kernel)
+        #     self.m_prior["gp_variance"] = bilby_prior.Gamma(k=5, theta=1)
+
+        # for key, model in self.models.items():
+        #     if model.m_prior is not None:
+        #         # Note that we assume the user has taken care to give every
+        #         # prior a unique key
+        #         self.m_prior.update(model.m_prior)
+
+        # self.m_prior = bilby_prior.PriorDict(dictionary=self.m_prior)
 
     ##########################################################################
     ##########################################################################
@@ -1544,7 +1607,7 @@ class LinearMixerLocal(BaseMixer):
             experimental observables to compare models with
         y_err : np.ndarray
             gaussian error bars on observables
-        initial_local_variables : np.ndarray
+        local_variables : np.ndarray
             parameters that determine where to sample the prior distribution,
             for initializing sampler
         model_parameters : Optional[Dict[str, List[Any]]]
@@ -1580,25 +1643,28 @@ class LinearMixerLocal(BaseMixer):
                 "printdt": 60,
             }
 
-        result = bilby_run_sampler(
-            likelihood=self.MixLikelihood(
-                keys=list(self.m_prior.keys()),
-                loglikelihood_func=self.mix_loglikelihood,
-                evaluate_weights=self.evaluate_weights,
-                y_exp=y_exp,
-                y_err=y_err,
-                model_parameters=model_parameters,
-                local_variables=local_variables,
-            ),
-            priors=self.m_prior,
-            outdir=str(outdir),
-            **kwargs_for_sampler,
-        )
-        result.plot_corner()
+        # result = bilby_run_sampler(
+        #     likelihood=self.MixLikelihood(
+        #         keys=list(self.m_prior.keys()),
+        #         loglikelihood_func=self.mix_loglikelihood,
+        #         evaluate_weights=self.evaluate_weights,
+        #         y_exp=y_exp,
+        #         y_err=y_err,
+        #         model_parameters=model_parameters,
+        #         local_variables=local_variables,
+        #     ),
+        #     priors=self.m_prior,
+        #     outdir=str(outdir),
+        #     **kwargs_for_sampler,
+        # )
+        # result.plot_corner()
 
-        self.m_posterior = np.array(
-            [result.posterior[var] for var in self.m_prior.keys()]
-        )
+        # self.m_posterior = np.array(
+        #     [result.posterior[var] for var in self.m_prior.keys()]
+        # )
+
+        NotImplemented
+
         self.m_posterior = np.transpose(self.m_posterior)
 
         self.evidence = result.log_10_evidence
