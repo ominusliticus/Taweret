@@ -38,9 +38,9 @@ class Model_Cos(BaseModel):
 
     def log_likelihood_elementwise(
             self,
+            x_exp: np.ndarray,
             y_exp: np.ndarray,
             y_err: np.ndarray,
-            x_exp: np.ndarray
     ) -> np.ndarray:
         result = np.sum((self.evaluate(x_exp) - y_exp) ** 2 / y_err ** 2)
         result += np.sum(np.log(2 * np.pi * y_err ** 2))
@@ -59,9 +59,9 @@ class Model_Exp(BaseModel):
 
     def log_likelihood_elementwise(
             self,
+            x_exp: np.ndarray,
             y_exp: np.ndarray,
             y_err: np.ndarray,
-            x_exp: np.ndarray
     ) -> np.ndarray:
         result = np.sum((self.evaluate(x_exp) - y_exp) ** 2 / y_err ** 2)
         result += np.sum(np.log(2 * np.pi * y_err ** 2))
@@ -72,7 +72,7 @@ class Model_Exp(BaseModel):
 
 
 def test_with_bessel(number_data_points: int = 10):
-    truth = TruthModel(switching_point=0.0)
+    truth = TruthModel(switching_point=-1.0)
 
     x_exp = np.linspace(-5, 5, number_data_points)
     y_exp = truth.evaluate(x_exp)
@@ -101,8 +101,9 @@ def test_with_bessel(number_data_points: int = 10):
         y_err=y_err,
         outdir=path / 'plots',
         local_variables=x_exp,
-        burn=200,
-        steps=20_000,
+        # burn=200,
+        steps=2_000,
+        thinning=1,
     )
 
     fig1, ax1 = plt.subplots(ncols=4, nrows=1, figsize=(4 * 7, 7))
@@ -113,9 +114,10 @@ def test_with_bessel(number_data_points: int = 10):
         r'$\mu_{(1,0)}$',
         r'$\sigma_{(1,0)}$'
     ]
-    for i in range(posterior.shape[1]):
-        ax1[i].hist(posterior[:, i], histtype='step', label=labels[i])
+    for i in range(posterior.shape[0]):
+        ax1[i].hist(posterior[i], histtype='step', label=labels[i])
         mp.costumize_axis(ax1[i], '', r'$P($' + labels[i] + r'$)$')
+        ax1[i].set_ylim(-2, 2)
     fig1.tight_layout()
 
     fig2, ax2 = plt.subplots(ncols=1, nrows=1, figsize=(7, 7))
